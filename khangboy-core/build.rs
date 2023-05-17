@@ -42,30 +42,30 @@ fn gen_table() -> [Option<String>; 256] {
     set_opcode(
         &mut out,
         0x02,
-        &format!("let addr = Reg16::BC.read(self); self.write8(com, addr, self.a);"),
+        "let addr = Reg16::BC.read(self); self.write8(com, addr, self.a);",
     );
     set_opcode(
         &mut out,
         0x12,
-        &format!("let addr = Reg16::DE.read(self); self.write8(com, addr, self.a);"),
+        "let addr = Reg16::DE.read(self); self.write8(com, addr, self.a);",
     );
-    set_opcode(&mut out, 0x22, &format!("let addr = Reg16::HL.read(self); self.write8(com, addr, self.a); Reg16::HL.write(self, addr.wrapping_add(1));"));
-    set_opcode(&mut out, 0x32, &format!("let addr = Reg16::HL.read(self); self.write8(com, addr, self.a); Reg16::HL.write(self, addr.wrapping_sub(1));"));
+    set_opcode(&mut out, 0x22, "let addr = Reg16::HL.read(self); self.write8(com, addr, self.a); Reg16::HL.write(self, addr.wrapping_add(1));");
+    set_opcode(&mut out, 0x32, "let addr = Reg16::HL.read(self); self.write8(com, addr, self.a); Reg16::HL.write(self, addr.wrapping_sub(1));");
 
     // LD A, (r16)
     // 0x0A, 0x1A, 0x2A, 0x3A
     set_opcode(
         &mut out,
         0x0A,
-        &format!("let addr = Reg16::BC.read(self); self.a = self.read8(com, addr);"),
+        "let addr = Reg16::BC.read(self); self.a = self.read8(com, addr);",
     );
     set_opcode(
         &mut out,
         0x1A,
-        &format!("let addr = Reg16::DE.read(self); self.a = self.read8(com, addr);"),
+        "let addr = Reg16::DE.read(self); self.a = self.read8(com, addr);",
     );
-    set_opcode(&mut out, 0x2A, &format!("let addr = Reg16::HL.read(self); self.a = self.read8(com, addr); Reg16::HL.write(self, addr.wrapping_add(1));"));
-    set_opcode(&mut out, 0x3A, &format!("let addr = Reg16::HL.read(self); self.a = self.read8(com, addr); Reg16::HL.write(self, addr.wrapping_sub(1));"));
+    set_opcode(&mut out, 0x2A, "let addr = Reg16::HL.read(self); self.a = self.read8(com, addr); Reg16::HL.write(self, addr.wrapping_add(1));");
+    set_opcode(&mut out, 0x3A, "let addr = Reg16::HL.read(self); self.a = self.read8(com, addr); Reg16::HL.write(self, addr.wrapping_sub(1));");
 
     // 0xCB prefix
     set_opcode(&mut out, 0xCB, "self.handle_cb(com);");
@@ -574,7 +574,9 @@ fn set_opcode(out: &mut [Option<String>], idx: usize, contents: &str) {
 
 // Writes the opcode handler table to a big switch statement
 fn write_opcodes(writer: &mut impl Write, opcodes: &[Option<String>]) {
-    writer.write("match self.opcode {\n".as_bytes()).unwrap();
+    writer
+        .write_all("match self.opcode {\n".as_bytes())
+        .unwrap();
 
     let mut count = 0;
     for (i, x) in opcodes.iter().enumerate() {
@@ -588,9 +590,9 @@ fn write_opcodes(writer: &mut impl Write, opcodes: &[Option<String>]) {
 
     if count != 256 {
         writer
-            .write("x => panic!(\"Unhandled opcode 0x{x:X}\")\n".as_bytes())
+            .write_all("x => panic!(\"Unhandled opcode 0x{x:X}\")\n".as_bytes())
             .unwrap();
     }
 
-    writer.write("}".as_bytes()).unwrap();
+    writer.write_all("}".as_bytes()).unwrap();
 }

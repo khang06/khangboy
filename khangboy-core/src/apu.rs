@@ -1,14 +1,9 @@
 use crate::util::BitIndex;
 
 // The audio processing unit, which handles audio stuff
+#[derive(Default)]
 pub struct APU {
     enabled: bool,
-}
-
-impl Default for APU {
-    fn default() -> Self {
-        Self { enabled: false }
-    }
 }
 
 impl APU {

@@ -1,4 +1,3 @@
 /target
-/dmg_rom.bin
 /test_roms
-/cpu.log
+/khangboy-core/src/opcodes.inl

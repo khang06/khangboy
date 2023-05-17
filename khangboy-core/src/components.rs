@@ -17,6 +17,8 @@ pub struct Components {
     bootrom_disabled: bool,
     pub interrupt_flag: u8,
     pub interrupt_enable: u8,
+
+    pub cycle: u64,
 }
 
 impl Components {
@@ -36,6 +38,8 @@ impl Components {
             bootrom_disabled: false,
             interrupt_flag: 0,
             interrupt_enable: 0,
+
+            cycle: 0,
         }
     }
 
@@ -43,8 +47,9 @@ impl Components {
     pub fn tick(&mut self) {
         // TODO: What order is this supposed to be in? Does it even matter?
         self.interrupt_flag |= (self.timer.tick() as u8) << 2;
-        self.ppu.tick();
+        self.interrupt_flag |= self.ppu.tick() as u8;
         self.apu.tick();
+        self.cycle += 1;
     }
 
     // Ticks components by one M-cycle, then reads a byte from an address

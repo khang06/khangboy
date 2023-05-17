@@ -1,11 +1,6 @@
 // Handles link port stuff, used for link cable and blargg CPU tests
+#[derive(Default)]
 pub struct Serial;
-
-impl Default for Serial {
-    fn default() -> Self {
-        Self {}
-    }
-}
 
 impl Serial {
     pub fn read_sb(&self) -> u8 {

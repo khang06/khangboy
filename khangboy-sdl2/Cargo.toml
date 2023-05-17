@@ -1,0 +1,15 @@
+[package]
+name = "khangboy-sdl2"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+imgui = "0.10.0"
+imgui-glow-renderer = "0.10.0"
+imgui-sdl2-support = "0.10.0"
+khangboy-core = { path = "../khangboy-core" }
+sdl2 = "0.34.5"
+spin_sleep = "1.1.1"
+triple_buffer = "6.2.0"

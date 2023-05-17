@@ -1,31 +1,24 @@
 use crate::{components::Components, util::BitIndex};
 
-#[cfg(feature = "gb_doctor")]
-use std::io::Write;
-
 #[derive(Default, Debug)]
 pub struct CPU {
-    a: u8,
-    b: u8,
-    c: u8,
-    d: u8,
-    e: u8,
-    f: u8, // Flags
-    h: u8,
-    l: u8,
+    pub a: u8,
+    pub b: u8,
+    pub c: u8,
+    pub d: u8,
+    pub e: u8,
+    pub f: u8, // Flags
+    pub h: u8,
+    pub l: u8,
     ime: bool,        // Interrupts
     ime_queued: bool, // The effects of EI are delayed by one instruction
     halted: bool,
     halt_bug: bool,
 
-    sp: u16,
-    pc: u16,
+    pub sp: u16,
+    pub pc: u16,
 
     opcode: u8, // Fetched during execution of last instruction
-    cycle: u64, // Counted in M-cycles
-
-    #[cfg(feature = "gb_doctor")]
-    log: Option<std::io::BufWriter<std::fs::File>>,
 }
 
 enum Reg16 {
@@ -125,27 +118,6 @@ impl Reg8<'_> {
 }
 
 impl CPU {
-    #[cfg(feature = "gb_doctor")]
-    pub fn new() -> Self {
-        Self {
-            a: 0x01,
-            f: 0xB0,
-            b: 0x00,
-            c: 0x13,
-            d: 0x00,
-            e: 0xD8,
-            h: 0x01,
-            l: 0x4D,
-            sp: 0xFFFE,
-            pc: 0x0100,
-            log: Some(std::io::BufWriter::new(
-                std::fs::File::create("cpu.log").unwrap(),
-            )),
-            ..Default::default()
-        }
-    }
-
-    #[cfg(not(feature = "gb_doctor"))]
     pub fn new() -> Self {
         Default::default()
     }
@@ -153,7 +125,9 @@ impl CPU {
     // Steps by one instruction
     // Also ticks every component accordingly depending on the timing
     // M-cycle (4 T-cycles) granularity, but most other GB emulators have that too
-    pub fn step(&mut self, com: &mut Components) {
+    pub fn step(&mut self, com: &mut Components) -> u64 {
+        let start_cycle = com.cycle;
+
         // Handle interrupts
         let interrupts = com.interrupt_enable & com.interrupt_flag;
         if self.ime && interrupts != 0 {
@@ -175,7 +149,7 @@ impl CPU {
         if self.halted {
             if interrupts == 0 {
                 self.run_cycle(com);
-                return;
+                return com.cycle - start_cycle;
             }
             self.halted = false;
         }
@@ -191,27 +165,6 @@ impl CPU {
         // See build.rs
         include!("opcodes.inl");
 
-        #[cfg(feature = "gb_doctor")]
-        writeln!(
-            self.log.as_mut().unwrap(),
-            "A:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
-            self.a,
-            self.f,
-            self.b,
-            self.c,
-            self.d,
-            self.e,
-            self.h,
-            self.l,
-            self.sp,
-            self.pc,
-            com.read_passive(self.pc),
-            com.read_passive(self.pc.wrapping_add(1)),
-            com.read_passive(self.pc.wrapping_add(2)),
-            com.read_passive(self.pc.wrapping_add(3))
-        )
-        .unwrap();
-
         //println!("{self:?}");
 
         // Fetch the next opcode
@@ -225,6 +178,8 @@ impl CPU {
             self.halt_bug = true;
             self.halted = false;
         }
+
+        com.cycle - start_cycle
     }
 
     // Handles 0xCB prefix bit arithmetic opcodes
@@ -325,21 +280,18 @@ impl CPU {
     // Runs one M-cycle
     #[inline]
     fn run_cycle(&mut self, com: &mut Components) {
-        self.cycle += 1;
         com.tick();
     }
 
     // Reads an 8-bit value from an address
     #[inline]
     fn read8(&mut self, com: &mut Components, addr: u16) -> u8 {
-        self.cycle += 1;
         com.read(addr)
     }
 
     // Writes an 8-bit value to an address
     #[inline]
     fn write8(&mut self, com: &mut Components, addr: u16, val: u8) {
-        self.cycle += 1;
         com.write(addr, val)
     }
 

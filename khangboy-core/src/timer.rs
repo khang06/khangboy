@@ -1,6 +1,7 @@
 use crate::util::BitIndex;
 
 // Keeps track of cycles
+#[derive(Default)]
 pub struct Timer {
     clocks: u16,
     counter: u8,
@@ -8,18 +9,6 @@ pub struct Timer {
     control: u8,
 
     edge_delay: bool,
-}
-
-impl Default for Timer {
-    fn default() -> Self {
-        Self {
-            clocks: 0,
-            counter: 0,
-            modulo: 0,
-            control: 0,
-            edge_delay: false,
-        }
-    }
 }
 
 impl Timer {
