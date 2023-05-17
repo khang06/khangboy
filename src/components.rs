@@ -15,6 +15,8 @@ pub struct Components {
     hram: [u8; 0x80],
 
     bootrom_disabled: bool,
+    pub interrupt_flag: u8,
+    pub interrupt_enable: u8,
 }
 
 impl Components {
@@ -32,13 +34,15 @@ impl Components {
             hram: [0u8; 0x80],
 
             bootrom_disabled: false,
+            interrupt_flag: 0,
+            interrupt_enable: 0,
         }
     }
 
     // Processes one M-cycle/four T-cycles
     pub fn tick(&mut self) {
         // TODO: What order is this supposed to be in? Does it even matter?
-        self.timer.tick();
+        self.interrupt_flag |= (self.timer.tick() as u8) << 2;
         self.ppu.tick();
         self.apu.tick();
     }
@@ -76,13 +80,47 @@ impl Components {
             0xFF80..=0xFFFE => self.hram[addr as usize & 0x7F],
             // Interrupt enable
             // TODO: Do invalid interrupt bits get set/cleared?
-            0xFFFF => unimplemented!("No interrupts yet"),
+            0xFFFF => self.interrupt_enable,
         }
     }
 
     // Handles I/O region (0xFFxx) reads
     fn read_io(&mut self, addr: u16) -> u8 {
         match addr as u8 {
+            // P1/JOYP: Joypad
+            0x00 => 0x00,
+            // Serial transfer data
+            0x01 => self.serial.read_sb(),
+            // Serial transfer control
+            0x02 => self.serial.read_sc(),
+            // Divider register
+            0x04 => self.timer.read_div(),
+            // Timer counter
+            0x05 => self.timer.read_tima(),
+            // Timer modulo
+            0x06 => self.timer.read_tma(),
+            // Timer control
+            0x07 => self.timer.read_tac(),
+            // Interrupt flag
+            0x0F => self.interrupt_flag,
+            // NR52: Sound on/off
+            0x26 => self.apu.read_nr52(),
+            // LCD control
+            0x40 => self.ppu.read_lcdc(),
+            // LCD status
+            0x41 => self.ppu.read_stat(),
+            // Viewport Y position
+            0x42 => self.ppu.read_scy(),
+            // Viewport X position
+            0x43 => self.ppu.read_scx(),
+            // LCD Y coordinate
+            0x44 => self.ppu.read_ly(),
+            // LCD Y compare
+            0x45 => self.ppu.read_lyc(),
+            // BG palette data
+            0x47 => self.ppu.read_bgp(),
+            // KEY1
+            0x4D => 0xFF,
             // Bootrom disable
             0x50 => self.bootrom_disabled as u8,
             x => unimplemented!("Unmapped I/O read at 0xff{x:02x}"),
@@ -115,13 +153,55 @@ impl Components {
             // HRAM
             0xFF80..=0xFFFE => self.hram[addr as usize & 0x7F] = val,
             // Interrupt enable
-            0xFFFF => unimplemented!("No interrupts yet"),
+            0xFFFF => self.interrupt_enable = val,
         }
     }
 
     // Handles I/O region (0xFFxx) writes
     fn write_io(&mut self, addr: u16, val: u8) {
         match addr as u8 {
+            // P1/JOYP: Joypad
+            0x00 => (),
+            // Serial transfer data
+            0x01 => self.serial.write_sb(val),
+            // Serial transfer control
+            0x02 => self.serial.write_sc(val),
+            // Divider register
+            0x04 => self.timer.write_div(val),
+            // Timer counter
+            0x05 => self.timer.write_tima(val),
+            // Timer modulo
+            0x06 => self.timer.write_tma(val),
+            // Timer control
+            0x07 => self.timer.write_tac(val),
+            // Interrupt flag
+            0x0F => self.interrupt_flag = val,
+            // NR11: Channel 1 length timer & duty cycle
+            0x11 => self.apu.write_nr11(val),
+            // NR12: Channel 1 volume & envelope
+            0x12 => self.apu.write_nr12(val),
+            // NR13: Channel 1 wavelength low
+            0x13 => self.apu.write_nr13(val),
+            // NR14: Channel 1 wavelength high & control
+            0x14 => self.apu.write_nr14(val),
+            // NR50: Master volume & VIN panning
+            0x24 => self.apu.write_nr50(val),
+            // NR51: Sound panning
+            0x25 => self.apu.write_nr51(val),
+            // NR52: Sound on/off
+            0x26 => self.apu.write_nr52(val),
+            // LCD control
+            0x40 => self.ppu.write_lcdc(val),
+            // LCD status
+            0x41 => self.ppu.write_stat(val),
+            // Viewport Y position
+            0x42 => self.ppu.write_scy(val),
+            // Viewport X postion
+            0x43 => self.ppu.write_scx(val),
+            // LCD Y compare
+            0x45 => self.ppu.write_lyc(val),
+            // BG palette data
+            0x47 => self.ppu.write_bgp(val),
             // Bootrom disable (can only be set once!)
             0x50 => self.bootrom_disabled |= val != 0,
             x => unimplemented!("Unmapped I/O write at 0xff{x:02x}"),

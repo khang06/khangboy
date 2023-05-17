@@ -9,6 +9,7 @@ mod ppu;
 mod rom;
 mod serial;
 mod timer;
+mod util;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
