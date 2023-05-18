@@ -13,6 +13,9 @@ struct SharedData {
 
     tile_data: Box<[u8; 0x1800]>,
     tile_data_hash: u64,
+
+    fb: Box<[u8; 160 * 144]>,
+    fb_hash: u64,
 }
 
 impl Default for SharedData {
@@ -21,6 +24,8 @@ impl Default for SharedData {
             registers: Default::default(),
             tile_data: Box::new([0; 0x1800]),
             tile_data_hash: 0,
+            fb: Box::new([0; 160 * 144]),
+            fb_hash: 0,
         }
     }
 }
@@ -100,11 +105,17 @@ fn emu_thread(
         {
             let tile_data = &gb.components.ppu.vram[..0x1800];
             let tile_data_hash = xxhash_rust::xxh3::xxh3_64(tile_data);
+            let fb = &gb.components.ppu.framebuffer;
+            let fb_hash = xxhash_rust::xxh3::xxh3_64(fb);
             let input = buf_input.input_buffer();
             input.registers.update(&gb.cpu);
             if input.tile_data_hash != tile_data_hash {
                 input.tile_data.clone_from_slice(tile_data);
                 input.tile_data_hash = tile_data_hash;
+            }
+            if input.fb_hash != fb_hash {
+                input.fb.clone_from_slice(fb);
+                input.fb_hash = fb_hash;
             }
         }
         buf_input.publish();
@@ -185,6 +196,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tex
     };
 
+    // Allocate framebuffer texture
+    let fb_tex = unsafe {
+        let ctx = renderer.gl_context();
+        let tex = ctx.create_texture()?;
+        ctx.bind_texture(glow::TEXTURE_2D, Some(tex));
+        ctx.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MIN_FILTER,
+            glow::NEAREST as _,
+        );
+        ctx.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MAG_FILTER,
+            glow::NEAREST as _,
+        );
+        ctx.tex_image_2d(
+            glow::TEXTURE_2D,
+            0,
+            glow::RGB as i32,
+            160,
+            144,
+            0,
+            glow::RGB,
+            glow::UNSIGNED_BYTE,
+            None,
+        );
+        tex
+    };
+
     // Spawn the emulation thread
     let (tx, rx) = mpsc::channel();
     let (buf_input, mut buf_output) = triple_buffer::triple_buffer(&Default::default());
@@ -195,6 +235,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut event_pump = sdl.event_pump()?;
     let mut tile_data_temp = Box::new([0; (16 * 8) * (24 * 8) * 3]);
     let mut tile_data_hash = 0;
+    let mut fb_temp = Box::new([0; 160 * 144 * 3]);
+    let mut fb_hash = 0;
     'main: loop {
         for event in event_pump.poll_iter() {
             platform.handle_event(&mut imgui, &event);
@@ -214,7 +256,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if output.tile_data_hash != tile_data_hash {
             // TODO: The math here is horrible
-            const COLORS: [u8; 4] = [0xFF, 0xC0, 0x40, 0x00];
+            const COLORS: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];
             for y in 0..24 {
                 for x in 0..16 {
                     for ty in 0..8 {
@@ -250,21 +292,62 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     glow::UNSIGNED_BYTE,
                     glow::PixelUnpackData::Slice(tile_data_temp.as_ref()),
                 );
-                //println!("{tile_data_temp:?}");
             }
             tile_data_hash = output.tile_data_hash;
         }
 
+        if output.fb_hash != fb_hash {
+            const COLORS: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];
+            for i in 0..(160 * 144) {
+                let col = COLORS[output.fb[i] as usize & 3];
+                fb_temp[i * 3] = col;
+                fb_temp[i * 3 + 1] = col;
+                fb_temp[i * 3 + 2] = col;
+            }
+            unsafe {
+                renderer
+                    .gl_context()
+                    .bind_texture(glow::TEXTURE_2D, Some(fb_tex));
+                renderer.gl_context().tex_sub_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    160,
+                    144,
+                    glow::RGB,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelUnpackData::Slice(fb_temp.as_ref()),
+                );
+            }
+            fb_hash = output.fb_hash;
+        }
+
         ui.window("Registers")
             .size([90.0, 180.0], imgui::Condition::FirstUseEver)
+            .position([75.0, 100.0], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text_wrapped(format!("{}", output.registers));
+            });
+        ui.window("Framebuffer")
+            .size(
+                [160.0 * 2.0 + 16.0, 144.0 * 2.0 + 36.0],
+                imgui::Condition::FirstUseEver,
+            )
+            .position([180.0, 100.0], imgui::Condition::FirstUseEver)
+            .build(|| {
+                imgui::Image::new(
+                    imgui::TextureId::new(fb_tex as usize),
+                    [160.0 * 2.0, 144.0 * 2.0],
+                )
+                .build(ui);
             });
         ui.window("PPU Tile Data")
             .size(
                 [16.0 * 8.0 * 2.0 + 16.0, 24.0 * 8.0 * 2.0 + 36.0],
                 imgui::Condition::FirstUseEver,
             )
+            .position([532.0, 100.0], imgui::Condition::FirstUseEver)
             .build(|| {
                 imgui::Image::new(
                     imgui::TextureId::new(tile_tex as usize),

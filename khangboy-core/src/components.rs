@@ -45,7 +45,9 @@ impl Components {
     pub fn tick(&mut self) {
         // TODO: What order is this supposed to be in? Does it even matter?
         self.interrupt_flag |= (self.timer.tick() as u8) << 2;
-        self.interrupt_flag |= self.ppu.tick() as u8;
+        let (vblank, stat) = self.ppu.tick();
+        self.interrupt_flag |= vblank as u8;
+        self.interrupt_flag |= (stat as u8) << 1;
         self.apu.tick();
         self.cycle += 1;
     }

@@ -12,8 +12,8 @@ impl Serial {
 
     pub fn write_sb(&mut self, val: u8) {
         // TODO
-        print!("{}", val as char);
-        let _ = std::io::stdout().flush();
+        //print!("{}", val as char);
+        //let _ = std::io::stdout().flush();
     }
 
     pub fn read_sc(&self) -> u8 {

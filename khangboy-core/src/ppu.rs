@@ -1,3 +1,5 @@
+use std::default;
+
 use crate::util::BitIndex;
 
 // The pixel processing unit, which handles display stuff
@@ -13,6 +15,7 @@ pub struct PPU {
     lcd_status: u8, // NOTE: Only the writable bits are stored here!
     lcd_y: u8,
     lcd_y_compare: u8,
+    lcd_x: u8,
     bg_palette: u8,
     obp0: u8,
     obp1: u8,
@@ -20,13 +23,12 @@ pub struct PPU {
     draw_mode: DrawMode,
     scanline_dot: u16,
 
+    fetcher: PixelFetcher,
+
     scanline_objs: [OAMObject; 10],
     scanline_objs_idx: usize,
 
-    bg_fifo: PixelFIFO,
-    obj_fifo: PixelFIFO,
-
-    framebuffer: [u8; 160 * 144],
+    pub framebuffer: [u8; 160 * 144],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -61,15 +63,15 @@ impl Default for PPU {
             lcd_status: 0x84,
             lcd_y: 0,
             lcd_y_compare: 0,
+            lcd_x: 0,
             bg_palette: 0xFC,
             obp0: 0xFF,
             obp1: 0xFF,
             draw_mode: DrawMode::OAMScan,
             scanline_dot: 0,
+            fetcher: Default::default(),
             scanline_objs: Default::default(),
             scanline_objs_idx: 0,
-            bg_fifo: Default::default(),
-            obj_fifo: Default::default(),
             framebuffer: [0u8; 160 * 144],
         }
     }
@@ -77,15 +79,18 @@ impl Default for PPU {
 
 impl PPU {
     // Ticks one M-cycle
-    pub fn tick(&mut self) -> bool {
+    pub fn tick(&mut self) -> (bool, bool) {
         let mut vblank_interrupt = false;
+        let mut stat_interrupt = false;
 
         // Check if the PPU and LCD are enabled
         // TODO: This should render a blank screen
         if !self.lcd_control.test(7) {
-            return vblank_interrupt;
+            return (vblank_interrupt, stat_interrupt);
         }
         for _ in 0..4 {
+            // This is hell
+            // http://pixelbits.16-b.it/GBEDG/ppu/#the-pixel-fifo
             match self.draw_mode {
                 // Scan for sprites to be included on the current scanline
                 // 80 dots, 1 sprite checked per 2 dots
@@ -107,39 +112,136 @@ impl PPU {
                         }
                     }
                     if self.scanline_dot == 79 {
+                        self.scanline_objs.sort_by_key(|x| x.x);
+                        self.fetcher = Default::default();
+                        self.fetcher.bg_excess = self.viewport_x & 7;
+                        self.lcd_x = 0;
                         self.draw_mode = DrawMode::Drawing;
                     }
                 }
                 DrawMode::Drawing => {
-                    if self.scanline_dot == 251 {
-                        self.draw_mode = DrawMode::HBlank;
+                    self.tick_fetcher();
+                    if self.fetcher.bg_fifo.count != 0 {
+                        if self.fetcher.bg_excess == 0 {
+                            let pixel = self.fetcher.bg_fifo.pop();
+                            self.framebuffer[self.lcd_y as usize * 160 + self.lcd_x as usize] =
+                                (self.bg_palette >> ((pixel & 3) * 2)) & 3;
+                            self.lcd_x += 1;
+                            if self.lcd_x == 160 {
+                                if self.lcd_control.test(3) {
+                                    stat_interrupt = true;
+                                }
+                                self.draw_mode = DrawMode::HBlank;
+                            }
+                        } else {
+                            self.fetcher.bg_fifo.pop();
+                            self.fetcher.bg_excess -= 1;
+                        }
                     }
+                    assert!(self.scanline_dot <= 389);
                 }
                 DrawMode::HBlank => {
                     if self.scanline_dot == 455 {
+                        self.lcd_y += 1;
+                        self.scanline_dot = 0;
+                        if self.lcd_y == self.lcd_y_compare && self.lcd_control.test(6) {
+                            stat_interrupt = true;
+                        }
                         self.draw_mode = if self.lcd_y == 143 {
                             vblank_interrupt = true;
+                            if self.lcd_control.test(4) {
+                                stat_interrupt = true;
+                            }
                             DrawMode::VBlank
                         } else {
+                            if self.lcd_control.test(5) {
+                                stat_interrupt = true;
+                            }
                             DrawMode::OAMScan
                         }
                     }
                 }
-                DrawMode::VBlank => {}
+                DrawMode::VBlank => {
+                    if self.scanline_dot == 455 {
+                        self.lcd_y += 1;
+                        if self.lcd_y == self.lcd_y_compare && self.lcd_control.test(6) {
+                            stat_interrupt = true;
+                        }
+                        self.scanline_dot = 0;
+                    }
+                    if self.lcd_y > 153 {
+                        self.lcd_y = 0;
+                        if self.lcd_control.test(5) {
+                            stat_interrupt = true;
+                        }
+                        self.draw_mode = DrawMode::OAMScan;
+                    }
+                }
             }
 
             self.scanline_dot += 1;
-            if self.scanline_dot > 455 {
-                self.lcd_y += 1;
-                self.scanline_dot = 0;
-            }
-            if self.lcd_y > 153 {
-                self.lcd_y = 0;
-                self.draw_mode = DrawMode::OAMScan;
-            }
         }
 
-        vblank_interrupt
+        (vblank_interrupt, stat_interrupt)
+    }
+
+    pub fn tick_fetcher(&mut self) {
+        // TODO: Sprites
+
+        self.tick_fetcher_bg();
+    }
+
+    fn tick_fetcher_bg(&mut self) {
+        // TODO: Window
+
+        // Each stage takes 2 M-cycles
+        self.fetcher.ticks += 1;
+        if self.fetcher.ticks % 2 == 1 {
+            return;
+        }
+
+        match self.fetcher.bg_state {
+            FetcherState::GetTile => {
+                let map_addr = if self.lcd_control.test(3) {
+                    0x1C00
+                } else {
+                    0x1800
+                };
+                let x = (self.fetcher.x.wrapping_add(self.viewport_x / 8)) & 0x1F;
+                let y = (self.lcd_y.wrapping_add(self.viewport_y)) / 8;
+                self.fetcher.bg_tile =
+                    self.vram[map_addr + ((y as usize * 32 + x as usize) & 0x3FF)];
+                self.fetcher.bg_state = FetcherState::GetTileDataLow;
+            }
+            FetcherState::GetTileDataLow | FetcherState::GetTileDataHigh => {
+                let tile_addr = if self.lcd_control.test(4) {
+                    self.fetcher.bg_tile as usize * 16
+                } else {
+                    (0x1000 + self.fetcher.bg_tile as i8 as isize * 16) as usize
+                };
+
+                let offset = ((self.lcd_y + self.viewport_y) & 7) as usize * 2;
+                self.fetcher.bg_state = if self.fetcher.bg_state == FetcherState::GetTileDataLow {
+                    self.fetcher.bg_low = self.vram[(tile_addr + offset) & 0x1FFF];
+                    FetcherState::GetTileDataHigh
+                } else {
+                    self.fetcher.bg_high = self.vram[(tile_addr + offset + 1) & 0x1FFF];
+                    FetcherState::Push
+                }
+            }
+            FetcherState::Push => {
+                if self.fetcher.bg_fifo.count == 0 {
+                    for i in (0..=7).rev() {
+                        self.fetcher.bg_fifo.push(
+                            0u8.set(0, self.fetcher.bg_low.test(i))
+                                .set(1, self.fetcher.bg_high.test(i)),
+                        );
+                    }
+                    self.fetcher.bg_state = FetcherState::GetTile;
+                    self.fetcher.x += 1;
+                }
+            }
+        }
     }
 
     pub fn read_vram(&self, addr: u16) -> u8 {
@@ -159,7 +261,7 @@ impl PPU {
     pub fn read_oam(&self, addr: u16) -> u8 {
         // TODO: Reads from 0xFEA0-0xFEFF can trigger OAM corruption on DMG
         let index = addr as usize & 0xFF;
-        if index < 0xA0 || self.draw_mode < DrawMode::OAMScan || !self.lcd_control.test(7) {
+        if index < 0xA0 && (self.draw_mode < DrawMode::OAMScan || !self.lcd_control.test(7)) {
             // SAFETY: index is bounds checked
             unsafe {
                 let oam_bytes = self.oam.as_ptr() as *const u8;
@@ -173,7 +275,7 @@ impl PPU {
     pub fn write_oam(&mut self, addr: u16, val: u8) {
         // TODO: What happens with writes to 0xFEA0-0xFEFF?
         let index = addr as usize & 0xFF;
-        if index < 0xA0 || self.draw_mode < DrawMode::OAMScan || !self.lcd_control.test(7) {
+        if index < 0xA0 && (self.draw_mode < DrawMode::OAMScan || !self.lcd_control.test(7)) {
             // SAFETY: index is bounds checked
             unsafe {
                 let oam_bytes = self.oam.as_mut_ptr() as *mut u8;
@@ -283,8 +385,8 @@ impl PPU {
 #[derive(Default)]
 struct PixelFIFO {
     // Bit 0-1: Color index
-    // Bit 2-4: Palette
-    // Bit 5: Priority
+    // Bit 2-4: Palette (Sprites only)
+    // Bit 5: Priority (Sprites only)
     inner: [u8; 16],
 
     count: u8,
@@ -307,4 +409,29 @@ impl PixelFIFO {
         self.count -= 1;
         ret
     }
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum FetcherState {
+    #[default]
+    GetTile,
+    GetTileDataLow,
+    GetTileDataHigh,
+    Push,
+}
+
+#[derive(Default)]
+struct PixelFetcher {
+    sprite_state: FetcherState,
+    sprite_fifo: PixelFIFO,
+
+    bg_state: FetcherState,
+    bg_fifo: PixelFIFO,
+    bg_tile: u8,
+    bg_low: u8,
+    bg_high: u8,
+    bg_excess: u8,
+
+    ticks: usize,
+    x: u8,
 }
