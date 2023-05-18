@@ -1,5 +1,3 @@
-use std::unimplemented;
-
 use crate::{apu::APU, ppu::PPU, rom::ROM, serial::Serial, timer::Timer};
 
 // Holds everything that the CPU has to interact with
@@ -93,7 +91,7 @@ impl Components {
     fn read_io(&mut self, addr: u16) -> u8 {
         match addr as u8 {
             // P1/JOYP: Joypad
-            0x00 => 0x00,
+            0x00 => 0xFF,
             // Serial transfer data
             0x01 => self.serial.read_sb(),
             // Serial transfer control
@@ -108,6 +106,8 @@ impl Components {
             0x07 => self.timer.read_tac(),
             // Interrupt flag
             0x0F => self.interrupt_flag,
+            // NR51: Sound panning
+            0x25 => self.apu.read_nr51(),
             // NR52: Sound on/off
             0x26 => self.apu.read_nr52(),
             // LCD control
@@ -134,7 +134,10 @@ impl Components {
             0x4D => 0xFF,
             // Bootrom disable
             0x50 => self.bootrom_disabled as u8,
-            x => unimplemented!("Unmapped I/O read at 0xff{x:02x}"),
+            x => {
+                println!("Unmapped I/O read at 0xff{x:02x}");
+                0xFF
+            }
         }
     }
 
@@ -197,6 +200,8 @@ impl Components {
             0x13 => self.apu.write_nr13(val),
             // NR14: Channel 1 wavelength high & control
             0x14 => self.apu.write_nr14(val),
+            // Does absolutely nothing but Is That a Demo in Your Pocket writes to it
+            0x15 => (),
             // NR21: Channel 2 length timer & duty cycle
             0x16 => self.apu.write_nr21(val),
             // NR22: Channel 2 volume & envelope
@@ -215,6 +220,8 @@ impl Components {
             0x1D => self.apu.write_nr33(val),
             // NR34: Channel 3 wavelength high & control
             0x1E => self.apu.write_nr34(val),
+            // Does absolutely nothing but Is That a Demo in Your Pocket writes to it
+            0x1F => (),
             // NR41: Channel 4 length timer
             0x20 => self.apu.write_nr41(val),
             // NR42: Channel 4 volume & envelope
@@ -229,6 +236,8 @@ impl Components {
             0x25 => self.apu.write_nr51(val),
             // NR52: Sound on/off
             0x26 => self.apu.write_nr52(val),
+            // Wave RAM
+            0x30..=0x3F => self.apu.write_wave(addr, val),
             // LCD control
             0x40 => self.ppu.write_lcdc(val),
             // LCD status
@@ -255,7 +264,7 @@ impl Components {
             0x50 => self.bootrom_disabled |= val != 0,
             // Does absolutely nothing but Tetris writes to it
             0x7F => (),
-            x => unimplemented!("Unmapped I/O write at 0xff{x:02x}"),
+            x => println!("Unmapped I/O write at 0xff{x:02x}"),
         }
     }
 }

@@ -4,6 +4,8 @@ use crate::util::BitIndex;
 #[derive(Default)]
 pub struct APU {
     enabled: bool,
+    pan: u8,
+    wave_ram: [u8; 0x10],
 }
 
 impl APU {
@@ -85,16 +87,25 @@ impl APU {
         // TODO
     }
 
-    pub fn write_nr51(&mut self, _val: u8) {
-        // TODO
+    pub fn read_nr51(&self) -> u8 {
+        self.pan
     }
 
-    pub fn read_nr52(&mut self) -> u8 {
+    pub fn write_nr51(&mut self, val: u8) {
+        self.pan = val
+    }
+
+    pub fn read_nr52(&self) -> u8 {
         // TODO
         (self.enabled as u8) << 7
     }
 
     pub fn write_nr52(&mut self, val: u8) {
         self.enabled = val.test(7);
+    }
+
+    pub fn write_wave(&mut self, addr: u16, val: u8) {
+        // TODO: Needs to implement access conflict behavior
+        self.wave_ram[addr as usize & 0xF] = val;
     }
 }
