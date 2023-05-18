@@ -6,9 +6,23 @@ enum EmuThreadCommand {
     Quit,
 }
 
-#[derive(Clone, Default)]
+// TODO: Syncing this stuff shouldn't happen if the windows are visible
+#[derive(Clone)]
 struct SharedData {
     registers: CPURegisters,
+
+    tile_data: Box<[u8; 0x1800]>,
+    tile_data_hash: u64,
+}
+
+impl Default for SharedData {
+    fn default() -> Self {
+        Self {
+            registers: Default::default(),
+            tile_data: Box::new([0; 0x1800]),
+            tile_data_hash: 0,
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -84,8 +98,14 @@ fn emu_thread(
 
         // Update the shared data
         {
+            let tile_data = &gb.components.ppu.vram[..0x1800];
+            let tile_data_hash = xxhash_rust::xxh3::xxh3_64(tile_data);
             let input = buf_input.input_buffer();
             input.registers.update(&gb.cpu);
+            if input.tile_data_hash != tile_data_hash {
+                input.tile_data.clone_from_slice(tile_data);
+                input.tile_data_hash = tile_data_hash;
+            }
         }
         buf_input.publish();
     }
@@ -136,6 +156,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut platform = imgui_sdl2_support::SdlPlatform::init(&mut imgui);
     let mut renderer = imgui_glow_renderer::AutoRenderer::initialize(gl, &mut imgui)?;
 
+    // Allocate tile data viewer texture
+    let tile_tex = unsafe {
+        let ctx = renderer.gl_context();
+        let tex = ctx.create_texture()?;
+        ctx.bind_texture(glow::TEXTURE_2D, Some(tex));
+        ctx.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MIN_FILTER,
+            glow::NEAREST as _,
+        );
+        ctx.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MAG_FILTER,
+            glow::NEAREST as _,
+        );
+        ctx.tex_image_2d(
+            glow::TEXTURE_2D,
+            0,
+            glow::RGB as i32,
+            16 * 8,
+            24 * 8,
+            0,
+            glow::RGB,
+            glow::UNSIGNED_BYTE,
+            None,
+        );
+        tex
+    };
+
     // Spawn the emulation thread
     let (tx, rx) = mpsc::channel();
     let (buf_input, mut buf_output) = triple_buffer::triple_buffer(&Default::default());
@@ -144,6 +193,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Run main event processing loop
     let mut event_pump = sdl.event_pump()?;
+    let mut tile_data_temp = Box::new([0; (16 * 8) * (24 * 8) * 3]);
+    let mut tile_data_hash = 0;
     'main: loop {
         for event in event_pump.poll_iter() {
             platform.handle_event(&mut imgui, &event);
@@ -160,10 +211,66 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         buf_output.update();
         let output = buf_output.output_buffer();
+
+        if output.tile_data_hash != tile_data_hash {
+            // TODO: The math here is horrible
+            const COLORS: [u8; 4] = [0xFF, 0xC0, 0x40, 0x00];
+            for y in 0..24 {
+                for x in 0..16 {
+                    for ty in 0..8 {
+                        for tx in 0..8 {
+                            let lo = (output.tile_data[(y * 128 + x * 8 + ty) * 2] >> (7 - tx))
+                                as usize
+                                & 1;
+                            let hi = (output.tile_data[(y * 128 + x * 8 + ty) * 2 + 1] >> (7 - tx))
+                                as usize
+                                & 1;
+                            let color = COLORS[(hi << 1) | lo];
+                            tile_data_temp[((y * 8 + ty) * (16 * 8) + (x * 8 + tx)) * 3] = color;
+                            tile_data_temp[((y * 8 + ty) * (16 * 8) + (x * 8 + tx)) * 3 + 1] =
+                                color;
+                            tile_data_temp[((y * 8 + ty) * (16 * 8) + (x * 8 + tx)) * 3 + 2] =
+                                color;
+                        }
+                    }
+                }
+            }
+            unsafe {
+                renderer
+                    .gl_context()
+                    .bind_texture(glow::TEXTURE_2D, Some(tile_tex));
+                renderer.gl_context().tex_sub_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    16 * 8,
+                    24 * 8,
+                    glow::RGB,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelUnpackData::Slice(tile_data_temp.as_ref()),
+                );
+                //println!("{tile_data_temp:?}");
+            }
+            tile_data_hash = output.tile_data_hash;
+        }
+
         ui.window("Registers")
             .size([90.0, 180.0], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text_wrapped(format!("{}", output.registers));
+            });
+        ui.window("PPU Tile Data")
+            .size(
+                [16.0 * 8.0 * 2.0 + 16.0, 24.0 * 8.0 * 2.0 + 36.0],
+                imgui::Condition::FirstUseEver,
+            )
+            .build(|| {
+                imgui::Image::new(
+                    imgui::TextureId::new(tile_tex as usize),
+                    [16.0 * 8.0 * 2.0, 24.0 * 8.0 * 2.0],
+                )
+                .build(ui);
             });
 
         let draw_data = imgui.render();
@@ -171,6 +278,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         renderer.render(draw_data).unwrap();
 
         window.gl_swap_window();
+
+        let debug = unsafe { renderer.gl_context().get_debug_message_log(1024) };
+        for x in debug {
+            println!("{x:?}");
+        }
     }
 
     // Signal the emulation thread to stop

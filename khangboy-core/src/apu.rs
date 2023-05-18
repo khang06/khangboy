@@ -9,6 +9,10 @@ pub struct APU {
 impl APU {
     pub fn tick(&mut self) {}
 
+    pub fn write_nr10(&mut self, _val: u8) {
+        // TODO
+    }
+
     pub fn write_nr11(&mut self, _val: u8) {
         // TODO
     }
@@ -22,6 +26,58 @@ impl APU {
     }
 
     pub fn write_nr14(&mut self, _val: u8) {
+        // TODO
+    }
+
+    pub fn write_nr21(&mut self, _val: u8) {
+        // TODO
+    }
+
+    pub fn write_nr22(&mut self, _val: u8) {
+        // TODO
+    }
+
+    pub fn write_nr23(&mut self, _val: u8) {
+        // TODO
+    }
+
+    pub fn write_nr24(&mut self, _val: u8) {
+        // TODO
+    }
+
+    pub fn write_nr30(&mut self, _val: u8) {
+        // TODO
+    }
+
+    pub fn write_nr31(&mut self, _val: u8) {
+        // TODO
+    }
+
+    pub fn write_nr32(&mut self, _val: u8) {
+        // TODO
+    }
+
+    pub fn write_nr33(&mut self, _val: u8) {
+        // TODO
+    }
+
+    pub fn write_nr34(&mut self, _val: u8) {
+        // TODO
+    }
+
+    pub fn write_nr41(&mut self, _val: u8) {
+        // TODO
+    }
+
+    pub fn write_nr42(&mut self, _val: u8) {
+        // TODO
+    }
+
+    pub fn write_nr43(&mut self, _val: u8) {
+        // TODO
+    }
+
+    pub fn write_nr44(&mut self, _val: u8) {
         // TODO
     }
 

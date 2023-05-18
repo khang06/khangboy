@@ -13,3 +13,4 @@ khangboy-core = { path = "../khangboy-core" }
 sdl2 = "0.34.5"
 spin_sleep = "1.1.1"
 triple_buffer = "6.2.0"
+xxhash-rust = { version = "0.8.6", features = ["xxh3"] }

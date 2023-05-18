@@ -7,7 +7,7 @@ use crate::{apu::APU, ppu::PPU, rom::ROM, serial::Serial, timer::Timer};
 pub struct Components {
     rom: Box<dyn ROM>,
     bootrom: Bootrom,
-    ppu: PPU,
+    pub ppu: PPU,
     apu: APU,
     timer: Timer,
     serial: Serial,
@@ -122,8 +122,14 @@ impl Components {
             0x44 => self.ppu.read_ly(),
             // LCD Y compare
             0x45 => self.ppu.read_lyc(),
+            // OAM DMA source address & start
+            0x46 => self.ppu.read_dma(),
             // BG palette data
             0x47 => self.ppu.read_bgp(),
+            // Window Y position
+            0x4A => self.ppu.read_wy(),
+            // Window X position
+            0x4B => self.ppu.read_wx(),
             // KEY1
             0x4D => 0xFF,
             // Bootrom disable
@@ -181,6 +187,8 @@ impl Components {
             0x07 => self.timer.write_tac(val),
             // Interrupt flag
             0x0F => self.interrupt_flag = val,
+            // NR10: Channel 1 sweep
+            0x10 => self.apu.write_nr10(val),
             // NR11: Channel 1 length timer & duty cycle
             0x11 => self.apu.write_nr11(val),
             // NR12: Channel 1 volume & envelope
@@ -189,6 +197,32 @@ impl Components {
             0x13 => self.apu.write_nr13(val),
             // NR14: Channel 1 wavelength high & control
             0x14 => self.apu.write_nr14(val),
+            // NR21: Channel 2 length timer & duty cycle
+            0x16 => self.apu.write_nr21(val),
+            // NR22: Channel 2 volume & envelope
+            0x17 => self.apu.write_nr22(val),
+            // NR23: Channel 2 wavelength low
+            0x18 => self.apu.write_nr23(val),
+            // NR24: Channel 2 wavelength high & control
+            0x19 => self.apu.write_nr24(val),
+            // NR30: Sound channel 3 DAC enable
+            0x1A => self.apu.write_nr30(val),
+            // NR31: Channel 3 length timer
+            0x1B => self.apu.write_nr31(val),
+            // NR32: Channel 3 output level
+            0x1C => self.apu.write_nr32(val),
+            // NR33: Channel 3 wavelength low
+            0x1D => self.apu.write_nr33(val),
+            // NR34: Channel 3 wavelength high & control
+            0x1E => self.apu.write_nr34(val),
+            // NR41: Channel 4 length timer
+            0x20 => self.apu.write_nr41(val),
+            // NR42: Channel 4 volume & envelope
+            0x21 => self.apu.write_nr42(val),
+            // NR43: Channel 4 frequency & randomness
+            0x22 => self.apu.write_nr43(val),
+            // NR44: Channel 4 control
+            0x23 => self.apu.write_nr44(val),
             // NR50: Master volume & VIN panning
             0x24 => self.apu.write_nr50(val),
             // NR51: Sound panning
@@ -205,10 +239,22 @@ impl Components {
             0x43 => self.ppu.write_scx(val),
             // LCD Y compare
             0x45 => self.ppu.write_lyc(val),
+            // OAM DMA source address & start
+            0x46 => self.ppu.write_dma(val),
             // BG palette data
             0x47 => self.ppu.write_bgp(val),
+            // OBJ palette 0 data
+            0x48 => self.ppu.write_obp0(val),
+            // OBJ palette 1 data
+            0x49 => self.ppu.write_obp1(val),
+            // Window Y position
+            0x4A => self.ppu.write_wy(val),
+            // Window X position
+            0x4B => self.ppu.write_wx(val),
             // Bootrom disable (can only be set once!)
             0x50 => self.bootrom_disabled |= val != 0,
+            // Does absolutely nothing but Tetris writes to it
+            0x7F => (),
             x => unimplemented!("Unmapped I/O write at 0xff{x:02x}"),
         }
     }

@@ -3,15 +3,19 @@ use crate::util::BitIndex;
 // The pixel processing unit, which handles display stuff
 #[allow(clippy::upper_case_acronyms)]
 pub struct PPU {
-    vram: [u8; 0x2000],
+    pub vram: [u8; 0x2000],
     oam: [OAMObject; 40],
     viewport_y: u8,
     viewport_x: u8,
+    window_y: u8,
+    window_x: u8,
     lcd_control: u8,
     lcd_status: u8, // NOTE: Only the writable bits are stored here!
     lcd_y: u8,
     lcd_y_compare: u8,
     bg_palette: u8,
+    obp0: u8,
+    obp1: u8,
 
     draw_mode: DrawMode,
     scanline_dot: u16,
@@ -51,11 +55,15 @@ impl Default for PPU {
             oam: [Default::default(); 40],
             viewport_y: 0,
             viewport_x: 0,
+            window_y: 0,
+            window_x: 0,
             lcd_control: 0,
             lcd_status: 0x84,
             lcd_y: 0,
             lcd_y_compare: 0,
             bg_palette: 0xFC,
+            obp0: 0xFF,
+            obp1: 0xFF,
             draw_mode: DrawMode::OAMScan,
             scanline_dot: 0,
             scanline_objs: Default::default(),
@@ -228,6 +236,47 @@ impl PPU {
 
     pub fn write_bgp(&mut self, val: u8) {
         self.bg_palette = val;
+    }
+
+    pub fn read_obp0(&self) -> u8 {
+        self.obp0
+    }
+
+    pub fn write_obp0(&mut self, val: u8) {
+        self.obp0 = val;
+    }
+
+    pub fn read_obp1(&self) -> u8 {
+        self.obp1
+    }
+
+    pub fn write_obp1(&mut self, val: u8) {
+        self.obp1 = val;
+    }
+
+    pub fn read_dma(&self) -> u8 {
+        // TODO
+        0x00
+    }
+
+    pub fn write_dma(&mut self, _val: u8) {
+        // TODO
+    }
+
+    pub fn read_wy(&self) -> u8 {
+        self.window_y
+    }
+
+    pub fn write_wy(&mut self, val: u8) {
+        self.window_y = val;
+    }
+
+    pub fn read_wx(&self) -> u8 {
+        self.window_x
+    }
+
+    pub fn write_wx(&mut self, val: u8) {
+        self.window_x = val;
     }
 }
 
