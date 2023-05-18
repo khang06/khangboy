@@ -1,11 +1,6 @@
 use imgui_glow_renderer::glow::{self, HasContext};
 use khangboy_core::Gameboy;
-use std::{
-    fmt::Display,
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{fmt::Display, sync::mpsc, thread, time::Instant};
 
 enum EmuThreadCommand {
     Quit,
@@ -62,7 +57,7 @@ fn emu_thread(
     let mut gb = Gameboy::new(rom);
 
     // ~2ms per timestep
-    const CLOCK_SPEED: u64 = 4194304;
+    const CLOCK_SPEED: u64 = 4194304 / 4;
     const TARGET_CYCLES: u64 = CLOCK_SPEED / 512;
 
     let start = Instant::now();
@@ -114,7 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Make a new window with OpenGL support
     let window = video_subsystem
-        .window("Hello imgui-rs!", 1366, 768)
+        .window("khangboy-sdl2", 1366, 768)
         .allow_highdpi()
         .opengl()
         .position_centered()
