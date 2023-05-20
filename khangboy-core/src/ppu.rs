@@ -221,8 +221,6 @@ impl PPU {
     }
 
     fn tick_fetcher_bg(&mut self) {
-        // TODO: Window
-
         // Each stage takes 2 M-cycles
         self.fetcher.ticks += 1;
         if self.fetcher.ticks % 2 == 1 {
@@ -238,7 +236,7 @@ impl PPU {
                     0x1800
                 };
                 let (x, y) = if self.fetcher.bg_window {
-                    (self.fetcher.x, (self.window_lcd_y / 8) * 32)
+                    (self.fetcher.x, self.window_lcd_y / 8)
                 } else {
                     (
                         (self.fetcher.x.wrapping_add(self.viewport_x / 8)) & 0x1F,
