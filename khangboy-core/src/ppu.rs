@@ -28,6 +28,9 @@ pub struct PPU {
     scanline_objs: [OAMObject; 10],
     scanline_objs_idx: usize,
 
+    window_triggered: bool,
+    window_lcd_y: u8,
+
     pub framebuffer: [u8; 160 * 144],
 }
 
@@ -72,6 +75,8 @@ impl Default for PPU {
             fetcher: Default::default(),
             scanline_objs: Default::default(),
             scanline_objs_idx: 0,
+            window_triggered: false,
+            window_lcd_y: 0,
             framebuffer: [0u8; 160 * 144],
         }
     }
@@ -99,6 +104,9 @@ impl PPU {
                     if self.scanline_dot % 2 == 0 {
                         if self.scanline_dot == 0 {
                             self.scanline_objs_idx = 0;
+                            if self.lcd_y == self.window_y {
+                                self.window_triggered = true;
+                            }
                         }
                         let obj = self.oam[self.scanline_dot as usize / 2];
                         let height = if self.lcd_control.test(2) { 16 } else { 8 };
@@ -118,14 +126,20 @@ impl PPU {
                         self.lcd_x = 0;
                         self.draw_mode = DrawMode::Drawing;
                     }
+                    self.scanline_dot += 1;
                 }
                 DrawMode::Drawing => {
+                    self.scanline_dot += 1;
                     self.tick_fetcher();
                     if self.fetcher.bg_fifo.count != 0 {
                         if self.fetcher.bg_excess == 0 {
                             let pixel = self.fetcher.bg_fifo.pop();
                             self.framebuffer[self.lcd_y as usize * 160 + self.lcd_x as usize] =
-                                (self.bg_palette >> ((pixel & 3) * 2)) & 3;
+                                if (pixel & 4) != 0 {
+                                    (self.bg_palette >> ((pixel & 3) * 2)) & 3
+                                } else {
+                                    0x00
+                                };
                             self.lcd_x += 1;
                             if self.lcd_x == 160 {
                                 if self.lcd_control.test(3) {
@@ -141,17 +155,22 @@ impl PPU {
                     assert!(self.scanline_dot <= 389);
                 }
                 DrawMode::HBlank => {
-                    if self.scanline_dot == 455 {
+                    self.scanline_dot += 1;
+                    if self.scanline_dot == 456 {
                         self.lcd_y += 1;
+                        if self.fetcher.bg_window {
+                            self.window_lcd_y += 1;
+                        }
                         self.scanline_dot = 0;
                         if self.lcd_y == self.lcd_y_compare && self.lcd_control.test(6) {
                             stat_interrupt = true;
                         }
-                        self.draw_mode = if self.lcd_y == 143 {
+                        self.draw_mode = if self.lcd_y == 144 {
                             vblank_interrupt = true;
                             if self.lcd_control.test(4) {
                                 stat_interrupt = true;
                             }
+                            self.window_triggered = false;
                             DrawMode::VBlank
                         } else {
                             if self.lcd_control.test(5) {
@@ -162,7 +181,8 @@ impl PPU {
                     }
                 }
                 DrawMode::VBlank => {
-                    if self.scanline_dot == 455 {
+                    self.scanline_dot += 1;
+                    if self.scanline_dot == 456 {
                         self.lcd_y += 1;
                         if self.lcd_y == self.lcd_y_compare && self.lcd_control.test(6) {
                             stat_interrupt = true;
@@ -171,6 +191,7 @@ impl PPU {
                     }
                     if self.lcd_y > 153 {
                         self.lcd_y = 0;
+                        self.window_lcd_y = 0;
                         if self.lcd_control.test(5) {
                             stat_interrupt = true;
                         }
@@ -178,8 +199,6 @@ impl PPU {
                     }
                 }
             }
-
-            self.scanline_dot += 1;
         }
 
         (vblank_interrupt, stat_interrupt)
@@ -188,6 +207,16 @@ impl PPU {
     pub fn tick_fetcher(&mut self) {
         // TODO: Sprites
 
+        if self.window_triggered
+            && self.lcd_control.test(5)
+            && !self.fetcher.bg_window
+            && self.lcd_x >= self.window_x - 7
+        {
+            self.fetcher.bg_window = true;
+            self.fetcher.bg_fifo = Default::default();
+            self.fetcher.x = 0;
+            self.fetcher.bg_state = FetcherState::GetTile;
+        }
         self.tick_fetcher_bg();
     }
 
@@ -202,13 +231,20 @@ impl PPU {
 
         match self.fetcher.bg_state {
             FetcherState::GetTile => {
-                let map_addr = if self.lcd_control.test(3) {
+                let map_bit = if self.fetcher.bg_window { 6 } else { 3 };
+                let map_addr = if self.lcd_control.test(map_bit) {
                     0x1C00
                 } else {
                     0x1800
                 };
-                let x = (self.fetcher.x.wrapping_add(self.viewport_x / 8)) & 0x1F;
-                let y = (self.lcd_y.wrapping_add(self.viewport_y)) / 8;
+                let (x, y) = if self.fetcher.bg_window {
+                    (self.fetcher.x, (self.window_lcd_y / 8) * 32)
+                } else {
+                    (
+                        (self.fetcher.x.wrapping_add(self.viewport_x / 8)) & 0x1F,
+                        (self.lcd_y.wrapping_add(self.viewport_y)) / 8,
+                    )
+                };
                 self.fetcher.bg_tile =
                     self.vram[map_addr + ((y as usize * 32 + x as usize) & 0x3FF)];
                 self.fetcher.bg_state = FetcherState::GetTileDataLow;
@@ -220,7 +256,11 @@ impl PPU {
                     (0x1000 + self.fetcher.bg_tile as i8 as isize * 16) as usize
                 };
 
-                let offset = ((self.lcd_y + self.viewport_y) & 7) as usize * 2;
+                let offset = if self.fetcher.bg_window {
+                    (self.window_lcd_y & 7) as usize * 2
+                } else {
+                    ((self.lcd_y + self.viewport_y) & 7) as usize * 2
+                };
                 self.fetcher.bg_state = if self.fetcher.bg_state == FetcherState::GetTileDataLow {
                     self.fetcher.bg_low = self.vram[(tile_addr + offset) & 0x1FFF];
                     FetcherState::GetTileDataHigh
@@ -234,7 +274,8 @@ impl PPU {
                     for i in (0..=7).rev() {
                         self.fetcher.bg_fifo.push(
                             0u8.set(0, self.fetcher.bg_low.test(i))
-                                .set(1, self.fetcher.bg_high.test(i)),
+                                .set(1, self.fetcher.bg_high.test(i))
+                                .set(2, self.lcd_control.test(0)),
                         );
                     }
                     self.fetcher.bg_state = FetcherState::GetTile;
@@ -385,8 +426,9 @@ impl PPU {
 #[derive(Default)]
 struct PixelFIFO {
     // Bit 0-1: Color index
-    // Bit 2-4: Palette (Sprites only)
-    // Bit 5: Priority (Sprites only)
+    // Bit 2: Enabled (BG only)
+    // Bit 3-5: Palette (Sprites only)
+    // Bit 6: Priority (Sprites only)
     inner: [u8; 16],
 
     count: u8,
@@ -431,6 +473,7 @@ struct PixelFetcher {
     bg_low: u8,
     bg_high: u8,
     bg_excess: u8,
+    bg_window: bool,
 
     ticks: usize,
     x: u8,
