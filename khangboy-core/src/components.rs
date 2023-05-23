@@ -45,10 +45,23 @@ impl Components {
     pub fn tick(&mut self) {
         // TODO: What order is this supposed to be in? Does it even matter?
         self.interrupt_flag |= (self.timer.tick() as u8) << 2;
+
         let (vblank, stat) = self.ppu.tick();
         self.interrupt_flag |= vblank as u8;
         self.interrupt_flag |= (stat as u8) << 1;
+        if self.ppu.oam_dma_running {
+            // TODO: Emulate source area inaccessibility during DMA
+            let data = self
+                .read_passive(((self.ppu.oam_dma_src as u16) << 8) | self.ppu.oam_dma_idx as u16);
+            self.ppu.write_oam(self.ppu.oam_dma_idx as u16, data);
+            self.ppu.oam_dma_idx += 1;
+            if self.ppu.oam_dma_idx == 160 {
+                self.ppu.oam_dma_running = false;
+            }
+        }
+
         self.apu.tick();
+
         self.cycle += 1;
     }
 
@@ -73,10 +86,8 @@ impl Components {
             0x8000..=0x9FFF => self.ppu.read_vram(addr),
             // Cart RAM
             0xA000..=0xBFFF => self.rom.read_ram(addr),
-            // WRAM
-            0xC000..=0xDFFF => self.wram[addr as usize & 0x1FFF],
-            // Echo RAM
-            0xE000..=0xFDFF => self.wram[addr as usize & 0x1FFF],
+            // WRAM and Echo RAM
+            0xC000..=0xFDFF => self.wram[addr as usize & 0x1FFF],
             // OAM
             0xFE00..=0xFEFF => self.ppu.read_oam(addr),
             // I/O region
@@ -158,10 +169,8 @@ impl Components {
             0x8000..=0x9FFF => self.ppu.write_vram(addr, val),
             // Cart RAM
             0xA000..=0xBFFF => self.rom.write_ram(addr, val),
-            // WRAM
-            0xC000..=0xDFFF => self.wram[addr as usize & 0x1FFF] = val,
-            // Echo RAM
-            0xE000..=0xFDFF => self.wram[addr as usize & 0x1FFF] = val,
+            // WRAM and Echo RAM
+            0xC000..=0xFDFF => self.wram[addr as usize & 0x1FFF] = val,
             // OAM
             0xFE00..=0xFEFF => self.ppu.write_oam(addr, val),
             // I/O region
