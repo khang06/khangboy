@@ -1,4 +1,4 @@
-use std::default;
+use std::ops::{Index, IndexMut};
 
 use crate::util::BitIndex;
 
@@ -15,7 +15,7 @@ pub struct PPU {
     lcd_status: u8, // NOTE: Only the writable bits are stored here!
     lcd_y: u8,
     lcd_y_compare: u8,
-    lcd_x: u8,
+    lcd_x: i16,
     bg_palette: u8,
     obp0: u8,
     obp1: u8,
@@ -131,17 +131,15 @@ impl PPU {
                     if self.scanline_dot == 79 {
                         self.scanline_objs[..self.scanline_objs_count].sort_by_key(|x| x.x);
                         self.fetcher = Default::default();
-                        self.fetcher.bg_excess = self.viewport_x & 7;
-                        self.lcd_x = 0;
+                        self.lcd_x = -(self.viewport_x as i16 & 7);
                         self.draw_mode = DrawMode::Drawing;
                     }
                     self.scanline_dot += 1;
                 }
                 DrawMode::Drawing => {
                     self.scanline_dot += 1;
-                    self.tick_fetcher();
-                    if self.fetcher.bg_fifo.count != 0 {
-                        if self.fetcher.bg_excess == 0 {
+                    if self.tick_fetcher() && self.fetcher.bg_fifo.count != 0 {
+                        if self.lcd_x >= 0 {
                             let bg = self.fetcher.bg_fifo.pop();
                             let bg_col = if (bg & 4) != 0 {
                                 (self.bg_palette >> ((bg & 3) * 2)) & 3
@@ -177,7 +175,7 @@ impl PPU {
                             }
                         } else {
                             self.fetcher.bg_fifo.pop();
-                            self.fetcher.bg_excess -= 1;
+                            self.lcd_x += 1;
                         }
                     }
                     assert!(self.scanline_dot <= 389);
@@ -233,11 +231,11 @@ impl PPU {
         (vblank_interrupt, stat_interrupt)
     }
 
-    pub fn tick_fetcher(&mut self) {
+    pub fn tick_fetcher(&mut self) -> bool {
         if self.lcd_control.test(1)
             && !self.fetcher.fetching_sprite
             && self.fetcher.sprite_next_idx != self.scanline_objs_count
-            && self.scanline_objs[self.fetcher.sprite_next_idx].x - 8 <= self.lcd_x
+            && self.scanline_objs[self.fetcher.sprite_next_idx].x as u16 <= self.lcd_x as u16 + 8
         {
             self.fetcher.fetching_sprite = true;
             self.fetcher.sprite_ticks = 0;
@@ -248,13 +246,13 @@ impl PPU {
 
         if self.fetcher.fetching_sprite {
             self.tick_fetcher_sprite();
-            return;
+            return false;
         }
 
         if self.window_triggered
             && self.lcd_control.test(5)
             && !self.fetcher.bg_window
-            && self.lcd_x >= self.window_x - 7
+            && self.lcd_x >= self.window_x as i16 - 7
         {
             self.fetcher.bg_window = true;
             self.fetcher.bg_fifo = Default::default();
@@ -262,6 +260,8 @@ impl PPU {
             self.fetcher.bg_state = FetcherState::GetTile;
         }
         self.tick_fetcher_bg();
+
+        true
     }
 
     fn tick_fetcher_sprite(&mut self) {
@@ -298,13 +298,27 @@ impl PPU {
                 }
             }
             FetcherState::Push => {
-                for i in (0..=7).rev() {
-                    self.fetcher.sprite_fifo.push(
-                        0u8.set(0, self.fetcher.sprite_low.test(i))
-                            .set(1, self.fetcher.sprite_high.test(i))
-                            .set(3, self.fetcher.sprite_obj.flags.test(4))
-                            .set(4, self.fetcher.sprite_obj.flags.test(1)),
-                    );
+                for i in 0..8 {
+                    if self.fetcher.sprite_obj.x + i < 8 {
+                        continue;
+                    }
+
+                    let bit = if self.fetcher.sprite_obj.flags.test(5) {
+                        i
+                    } else {
+                        7 - i
+                    };
+
+                    let pixel = 0u8
+                        .set(0, self.fetcher.sprite_low.test(bit))
+                        .set(1, self.fetcher.sprite_high.test(bit))
+                        .set(3, self.fetcher.sprite_obj.flags.test(4))
+                        .set(4, self.fetcher.sprite_obj.flags.test(1));
+                    if i >= self.fetcher.sprite_fifo.count {
+                        self.fetcher.sprite_fifo.push(pixel);
+                    } else if self.fetcher.sprite_fifo[i as usize] & 3 == 0 {
+                        self.fetcher.sprite_fifo[i as usize] = pixel;
+                    }
                 }
                 self.fetcher.fetching_sprite = false;
                 FetcherState::GetTile
@@ -529,6 +543,20 @@ struct PixelFIFO {
     write_head: u8,
 }
 
+impl Index<usize> for PixelFIFO {
+    type Output = u8;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.inner[(self.read_head as usize + index) % 16]
+    }
+}
+
+impl IndexMut<usize> for PixelFIFO {
+    fn index_mut(&mut self, index: usize) -> &mut u8 {
+        &mut self.inner[(self.read_head as usize + index) % 16]
+    }
+}
+
 impl PixelFIFO {
     pub fn push(&mut self, pixel: u8) {
         assert!(self.count < self.inner.len() as u8);
@@ -572,7 +600,6 @@ struct PixelFetcher {
     bg_tile: u8,
     bg_low: u8,
     bg_high: u8,
-    bg_excess: u8,
     bg_window: bool,
 
     x: u8,
