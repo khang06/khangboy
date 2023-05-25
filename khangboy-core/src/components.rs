@@ -1,4 +1,4 @@
-use crate::{apu::APU, ppu::PPU, rom::ROM, serial::Serial, timer::Timer};
+use crate::{apu::APU, joypad::Joypad, ppu::PPU, rom::ROM, serial::Serial, timer::Timer};
 
 // Holds everything that the CPU has to interact with
 // Also gets ticked by the CPU struct
@@ -9,6 +9,7 @@ pub struct Components {
     apu: APU,
     timer: Timer,
     serial: Serial,
+    pub joypad: Joypad,
     wram: [u8; 0x2000],
     hram: [u8; 0x80],
 
@@ -28,6 +29,7 @@ impl Components {
             apu: Default::default(),
             timer: Default::default(),
             serial: Default::default(),
+            joypad: Default::default(),
 
             // TODO: Fill this with a psuedo-random pattern
             wram: [0u8; 0x2000],
@@ -59,6 +61,8 @@ impl Components {
                 self.ppu.oam_dma_running = false;
             }
         }
+
+        self.interrupt_flag |= (self.joypad.tick() as u8) << 4;
 
         self.apu.tick();
 
@@ -104,7 +108,7 @@ impl Components {
     fn read_io(&mut self, addr: u16) -> u8 {
         match addr as u8 {
             // P1/JOYP: Joypad
-            0x00 => 0xFF,
+            0x00 => self.joypad.read_p1(),
             // Serial transfer data
             0x01 => self.serial.read_sb(),
             // Serial transfer control
@@ -186,7 +190,7 @@ impl Components {
     fn write_io(&mut self, addr: u16, val: u8) {
         match addr as u8 {
             // P1/JOYP: Joypad
-            0x00 => (),
+            0x00 => self.joypad.write_p1(val),
             // Serial transfer data
             0x01 => self.serial.write_sb(val),
             // Serial transfer control

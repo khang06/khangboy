@@ -1,9 +1,12 @@
 use imgui_glow_renderer::glow::{self, HasContext};
 use khangboy_core::Gameboy;
+use sdl2::{event::Event, keyboard::Scancode};
 use std::{fmt::Display, sync::mpsc, thread, time::Instant};
 
 enum EmuThreadCommand {
     Quit,
+    KeyDown(usize),
+    KeyUp(usize),
 }
 
 // TODO: Syncing this stuff shouldn't happen if the windows are visible
@@ -81,11 +84,14 @@ fn emu_thread(
 
     let start = Instant::now();
     let mut cycles_executed = 0;
+    let mut key_state = 0x00;
     loop {
         // Handle any messages from the main thread
         if let Ok(msg) = rx.try_recv() {
             match msg {
                 EmuThreadCommand::Quit => break,
+                EmuThreadCommand::KeyDown(bit) => key_state |= 1 << bit,
+                EmuThreadCommand::KeyUp(bit) => key_state &= !(1 << bit),
             }
         }
 
@@ -99,6 +105,7 @@ fn emu_thread(
                 break diff;
             }
         };
+        gb.components.joypad.cur_input = key_state;
         cycles_executed += gb.run(cycles_to_run);
 
         // Update the shared data
@@ -239,10 +246,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut fb_hash = 0;
     'main: loop {
         for event in event_pump.poll_iter() {
+            // TODO: This should be configurable
+            const KEYBINDS: [Scancode; 8] = [
+                Scancode::X,
+                Scancode::Z,
+                Scancode::RShift,
+                Scancode::Return,
+                Scancode::Right,
+                Scancode::Left,
+                Scancode::Up,
+                Scancode::Down,
+            ];
             platform.handle_event(&mut imgui, &event);
 
-            if let sdl2::event::Event::Quit { .. } = event {
-                break 'main;
+            match event {
+                Event::Quit { timestamp: _ } => break 'main,
+                Event::KeyDown {
+                    timestamp: _,
+                    window_id: _,
+                    keycode: _,
+                    scancode,
+                    keymod: _,
+                    repeat: false,
+                } => {
+                    if let Some(scancode) = scancode {
+                        if let Some(bit) = KEYBINDS.iter().position(|&x| x == scancode) {
+                            tx.send(EmuThreadCommand::KeyDown(bit))?;
+                        }
+                    }
+                }
+                Event::KeyUp {
+                    timestamp: _,
+                    window_id: _,
+                    keycode: _,
+                    scancode,
+                    keymod: _,
+                    repeat: false,
+                } => {
+                    if let Some(scancode) = scancode {
+                        if let Some(bit) = KEYBINDS.iter().position(|&x| x == scancode) {
+                            tx.send(EmuThreadCommand::KeyUp(bit))?;
+                        }
+                    }
+                }
+                _ => (),
             }
         }
 

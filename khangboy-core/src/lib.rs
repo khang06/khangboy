@@ -3,6 +3,7 @@ pub mod apu;
 pub mod components;
 pub mod cpu;
 pub mod gb;
+pub mod joypad;
 pub mod ppu;
 pub mod rom;
 pub mod serial;
