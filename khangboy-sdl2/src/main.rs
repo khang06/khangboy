@@ -1,6 +1,10 @@
 use imgui_glow_renderer::glow::{self, HasContext};
 use khangboy_core::Gameboy;
-use sdl2::{event::Event, keyboard::Scancode};
+use sdl2::{
+    audio::{AudioCallback, AudioSpec, AudioSpecDesired},
+    event::Event,
+    keyboard::Scancode,
+};
 use std::{fmt::Display, sync::mpsc, thread, time::Instant};
 
 enum EmuThreadCommand {
@@ -72,6 +76,8 @@ impl Display for CPURegisters {
 
 fn emu_thread(
     rom_path: String,
+    audio_spec: AudioSpec,
+    mut audio_input: triple_buffer::Input<Vec<i16>>,
     mut buf_input: triple_buffer::Input<SharedData>,
     rx: mpsc::Receiver<EmuThreadCommand>,
 ) {
@@ -85,6 +91,7 @@ fn emu_thread(
     let start = Instant::now();
     let mut cycles_executed = 0;
     let mut key_state = 0x00;
+    let mut sample = 0;
     loop {
         // Handle any messages from the main thread
         if let Ok(msg) = rx.try_recv() {
@@ -126,6 +133,47 @@ fn emu_thread(
             }
         }
         buf_input.publish();
+
+        // Update the audio buffer (only generates a mono sine wave for now)
+        // TODO: Not synced up at all, main emulation loop needs to be reworked to sync to audio buffer size
+        {
+            let input = audio_input.input_buffer();
+            if input.len() != audio_spec.samples as usize * 2 {
+                input.resize(audio_spec.samples as usize * 2, 0);
+            }
+            for i in 0..audio_spec.samples as usize {
+                let val = (8192.0f32
+                    * ((2.0f32 * std::f32::consts::PI * 440.0f32) / 44100.0f32
+                        * (sample + i) as f32)
+                        .sin()) as i16;
+                input[i * 2] = val;
+                input[i * 2 + 1] = val;
+            }
+            sample += audio_spec.samples as usize;
+        }
+        audio_input.publish();
+    }
+}
+
+struct PlaybackCallback {
+    _spec: AudioSpec,
+    audio_output: triple_buffer::Output<Vec<i16>>,
+}
+
+impl AudioCallback for PlaybackCallback {
+    type Channel = i16;
+
+    fn callback(&mut self, data: &mut [i16]) {
+        // TODO: Needs to perform resampling
+        self.audio_output.update();
+        let audio = self.audio_output.output_buffer();
+        if data.len() != audio.len() {
+            for dst in data.iter_mut() {
+                *dst = 0;
+            }
+        } else {
+            data.clone_from_slice(&audio);
+        }
     }
 }
 
@@ -139,6 +187,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize SDL2
     let sdl = sdl2::init()?;
     let video_subsystem = sdl.video()?;
+    let audio_subsystem = sdl.audio()?;
+
+    // Create SDL2 audio device
+    // TODO: Will this config work on all hardware?
+    let desired_audio_spec = AudioSpecDesired {
+        freq: Some(44100),
+        channels: Some(2),
+        samples: None,
+    };
+    let (audio_input, audio_output) = triple_buffer::triple_buffer(&Default::default());
+    let mut audio_spec = None;
+    let playback_device = audio_subsystem.open_playback(None, &desired_audio_spec, |spec| {
+        println!("Initialized audio with playback spec {:?}", spec);
+        audio_spec = Some(spec);
+        PlaybackCallback {
+            _spec: spec,
+            audio_output,
+        }
+    })?;
+    playback_device.resume();
 
     // Make SDL2 create an OpenGL 3.3 core profile context
     let gl_attr = video_subsystem.gl_attr();
@@ -236,7 +304,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, rx) = mpsc::channel();
     let (buf_input, mut buf_output) = triple_buffer::triple_buffer(&Default::default());
     let rom_path = args[1].clone();
-    thread::spawn(move || emu_thread(rom_path, buf_input, rx));
+    thread::spawn(move || emu_thread(rom_path, audio_spec.unwrap(), audio_input, buf_input, rx));
 
     // Run main event processing loop
     let mut event_pump = sdl.event_pump()?;
